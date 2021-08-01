@@ -1,11 +1,13 @@
-import time
-import threading
-import struct
+import adafruit_character_lcd.character_lcd as characterlcd
 from rf24libs import RF24
 from RF24 import RF24, RF24_PA_LOW
-import board
+import sqlite3
+from sqlite3 import Error
 import digitalio
-import adafruit_character_lcd.character_lcd as characterlcd
+import threading
+import struct
+import board
+import time
 
 
 class Sensor:
@@ -21,6 +23,7 @@ class Sensor:
 
 # Globals.
 radio = RF24(25, 0)
+db = None
 
 # Dictionary of sensor data keyed on pipe address.
 sensors = {
@@ -96,9 +99,23 @@ def display_thread(sensors, sensors_lock):
 
             time.sleep(5)
 
+def connect_db(filename: str) -> sqlite3.Connection:
+    ''' Connect to the database and return that connection. '''
+    connection = None
+
+    try:
+        connection = sqlite3.connect(filename)
+        print('CONNECTION TO SENSOR DATABASE ESTABLISED')
+    except Error as e:
+        print(e)
+    
+    return connection
+
 def load_db(db, sensors):
     ''' Load sensor data from db '''
     count = 0
+
+    db = connect_db('data/pidration.db')
 
     for x in sensors.keys():
         s = Sensor(name='Sens{}'.format(x), address=addresses[count], id=x)
@@ -128,3 +145,7 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         read.join()
+        
+    finally:
+        if db:
+            db.close()
