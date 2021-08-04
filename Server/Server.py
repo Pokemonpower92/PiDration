@@ -1,4 +1,5 @@
 import adafruit_character_lcd.character_lcd as characterlcd
+from Sensor import *
 from rf24libs import RF24
 from RF24 import RF24, RF24_PA_LOW
 import sqlite3
@@ -9,28 +10,9 @@ import struct
 import board
 import time
 
-
-class Sensor:
-    ''' Sensor class '''
-    def __init__(self, **kwargs):
-        self.name    = kwargs.get("name")
-        self.address = kwargs.get("address")
-        self.id      = kwargs.get("id")
-        self.data    = kwargs.get("data", [])
-
-        self.threshold = kwargs.get("threshold", 400)
-        self.panic = False
-
 # Globals.
 radio = RF24(25, 0)
-db = None
-
-# Dictionary of sensor data keyed on pipe address.
-sensors = {
-    0: None,
-    1: None,
-    2: None
-}
+options = 3
 
 addresses = [
     b"\x78" * 5,
@@ -41,31 +23,38 @@ addresses = [
     b"\x05\xB6\xB5\xB4\xB3"
 ]
 
-sensors_lock = threading.Lock()
+# Sensor dictionary
+sensors = {}
 
-def reading_thread(radio, sensors, sensors_lock):
+def reading_thread(radio, sensors):
     ''' Thread that waits for sensors to report '''
 
-    # Open existing pipes.
-    for x, sensor in sensors.items():
-        print('Opened pipe {} at address {}'.format(x, sensor.address))
-        radio.openReadingPipe(x, sensor.address)
-    radio.setPALevel(RF24_PA_LOW)
-    radio.startListening()
-    
-    while True:
-        # Read from radio. 
-        data, pipe = radio.available_pipe()
-        
-        if data:
-            node, data = struct.unpack("<ii", radio.read(radio.payloadSize))
-            #print('Recieved {} from node {}'.format(data, node))
-            sensors[node].data.append(data)
-            sensors[node].panic = sensors[node].threshold <= data
-        
-        time.sleep(.25)
+    db = connect_db('data/pidration.db')
 
-def display_thread(sensors, sensors_lock):
+    try:
+        # Open existing pipes.
+        for x, sensor in sensors.items():
+            radio.openReadingPipe(x, sensor.address)
+        radio.setPALevel(RF24_PA_LOW)
+        radio.startListening()
+        
+        while True:
+            # Read from radio. 
+            data, pipe = radio.available_pipe()
+            
+            if data:
+                node, data = struct.unpack("<ii", radio.read(radio.payloadSize))
+                print('Recieved {} from node {}'.format(data, node))
+                sensors[node].data.append(data)
+                sensors[node].insert_data(db, data)
+                sensors[node].panic = sensors[node].threshold <= data
+            
+            time.sleep(.25)
+    finally:
+        if db:
+            db.close()
+
+def display_thread(sensors):
     ''' Thread that controls the lcd '''
 
     # LCD initialization. 
@@ -105,23 +94,57 @@ def connect_db(filename: str) -> sqlite3.Connection:
 
     try:
         connection = sqlite3.connect(filename)
-        print('CONNECTION TO SENSOR DATABASE ESTABLISED')
+
     except Error as e:
         print(e)
     
     return connection
 
-def load_db(db, sensors):
+def load_sensors(sensors):
     ''' Load sensor data from db '''
-    count = 0
 
     db = connect_db('data/pidration.db')
 
-    for x in sensors.keys():
-        s = Sensor(name='Sens{}'.format(x), address=addresses[count], id=x)
-        sensors[x] = s
-        count += 1
+    cur = db.cursor()
+    cur.execute("SELECT * FROM sensors")
 
+    all = cur.fetchall()
+    
+    for s in all:
+        id = s[0]
+        name = s[1]
+        node = s[2]
+        threshold = s[3]
+
+        sensors[node] = Sensor(node=node, 
+                               name=name, 
+                               threshold=threshold,
+                               address=addresses[node],
+                               id=id)
+
+    return sensors
+
+def print_menu():
+    print("Make a selection from the menu below")
+    print("by entering the number of the selection.")
+    print()
+
+    print("1. Examine sensor data.")
+    print("2. Quit.")
+    print()
+
+def process_input(inp, sensors):
+    inp = int(inp)
+
+    if inp not in range(1, 3):
+        print("Invalid selection.")
+        return
+    
+    if inp == 1:
+        pass
+    elif inp == 2:
+        exit()
+        
 if __name__ == "__main__":
 
     # Start reading thread.
@@ -132,20 +155,25 @@ if __name__ == "__main__":
         if not radio.begin():
             raise RuntimeError("radio hardware is not responding")
         radio.payloadSize = len(struct.pack("<ii", 0, 0))
-        load_db(None, sensors)
+
+        sensors = load_sensors(sensors)
 
         # Start up out threads.
         read = threading.Thread(target=reading_thread,
-                                args=(radio, sensors, sensors_lock))
+                                args=(radio, sensors),
+                                daemon=True)
         read.start()   
         
         display = threading.Thread(target=display_thread,
-                                args=(sensors, sensors_lock))
+                                args=(sensors,),
+                                daemon=True)
         display.start()
+
+        # Start up the menu.
+        while True:
+            print_menu()
+            process_input(input('> '), sensors)
 
     except KeyboardInterrupt:
         read.join()
-        
-    finally:
-        if db:
-            db.close()
+        display.join()

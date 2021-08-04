@@ -12,8 +12,16 @@ struct package {
 #define STATUS_PIN 7   // Status LED 
 #define ALERT_PIN 6    // Threshold pin for FC-28
 
+uint64_t address[6] = {0x7878787878LL,
+                       0xB3B4B5B6F1LL,
+                       0xB3B4B5B6CDLL,
+                       0xB3B4B5B6A3LL,
+                       0xB3B4B5B60FLL,
+                       0xB3B4B5B605LL
+                      };
+
 // Globals.
-uint64_t ADDR = 0xB3B4B5B6F1LL;
+uint64_t ADDR = address[0];
 RF24 radio(9, 10);
 int threshold;
 package p;
@@ -60,5 +68,5 @@ void loop(){
     digitalWrite(LED_BUILTIN, HIGH);
     delay(500);
     digitalWrite(LED_BUILTIN, LOW);
-    delay(500);
+    delay(300000);
 }
